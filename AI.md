@@ -2455,7 +2455,7 @@ server:
 | 30 | ReadTheDocs Documentation | Documentation |
 | 31 | I18N & A11Y | Internationalization, **Translation parity (all binaries)**, **--lang flag** |
 | 32 | Overlay Networks (Tor & I2P) | 32.1 Tor (binary auto-enables), 32.2 I2P eepsite (**opt-in**) |
-| 33 | Client & Agent | Client **REQUIRED**, Agent optional - CLI/TUI/GUI, **Scoped Agent Tokens**, **Smart Context**, **First-Run Wizard** |
+| 33 | Client & Agent | Client **REQUIRED**, Agent optional - CLI/TUI/GUI, **Scoped Agent Tokens**, **Smart Context**, **First-Run Wizard**, product-declared **Security Telemetry & Host Observability** |
 | 34 | Multi-User | **OPTIONAL** - Regular User accounts/registration, vanity URLs |
 | 35 | Organizations | **OPTIONAL** - multi-user orgs, vanity URLs |
 | 36 | Custom Domains | **OPTIONAL** - user/org branded domains |
@@ -62245,6 +62245,60 @@ pub fn generate_agent_token(scope: AgentScope) -> String {
   "message": "Agent token is invalid or expired"
 }
 ```
+
+### Security Telemetry and Host Observability (when declared by IDEA.md)
+
+When IDEA.md declares endpoint security monitoring, host observability, XDR, or SIEM capabilities, the project MUST implement its own server-side event, detection, storage, alert, incident, and dashboard features and its own endpoint collectors in the PART 33 agent. The implementation is first-party code for the project's supported platforms. It MUST NOT depend on Wazuh, Beszel, or another monitoring vendor's server, agent, API, database, protocol extensions, or executable. External products and their documentation may be used as capability-comparison references only.
+
+PART 21 remains required and continues to define the application's own Prometheus-compatible metrics endpoint and operational metrics. PART 21 does not satisfy this host-observability or security-monitoring requirement, and an external Grafana, Loki, or SIEM product is not required to view or operate the product's built-in dashboards.
+
+#### Product-owned capability contract
+
+The feature MUST provide the following capabilities when supported by the target OS and installed interfaces. Each collector reports its platform support and permission requirements; unsupported or unavailable data is represented as unavailable, never as a fabricated zero or healthy result.
+
+| Area | Minimum capability |
+|------|--------------------|
+| Host observability | Time-series CPU usage/load, memory/swap, filesystem capacity/inodes, disk I/O, network interface traffic/errors, uptime, service health, and agent/server health. Collect temperature, fan, SMART, ZFS/pool, container, process, and virtualization metrics only where the platform exposes a safe, tested source. |
+| Inventory context | OS/release/kernel/architecture, installed package identity and version, service inventory, and explicitly approved device attributes. Reuse PART 33's inventory rules; never collect password hashes, credentials, private keys, browser data, or unrelated personal content. |
+| Security event collection | Normalize supported authentication and authorization outcomes, account/group changes, privilege transitions, service/security configuration changes, package/update changes, and platform audit events. Collection is based on documented OS facilities and operator-selected source classes. |
+| File integrity | Establish and compare administrator-selected metadata/hash baselines for approved local paths; detect create/modify/delete/permission/owner changes. Exclude secrets, credential stores, private keys, mailbox/user-content trees, and network shares by default. Never upload file contents. |
+| Configuration assessment | Evaluate versioned, reviewable checks against supported OS/security configuration, report evidence and pass/fail/not-applicable state, and identify platform/version applicability. A check is read-only and MUST NOT remediate the host. |
+| Vulnerability findings | Correlate package inventory against versioned vulnerability/advisory data with source, retrieval time, affected version range, and confidence. Support signed content updates and an administrator-visible stale/offline state. Do not claim coverage for software or OS releases absent from the compatibility catalog. |
+| Detection and correlation | Parse/normalize supported event sources, evaluate built-in and administrator-authored versioned rules, correlate events across a bounded time window, deduplicate findings, and preserve rule version, evidence references, severity, confidence, and timestamps. Rule authoring MUST NOT execute arbitrary scripts or code. |
+| Alerts and incidents | Provide searchable/filterable alerts, acknowledgment, assignment, status, disposition, incident timelines, evidence references, retention controls, and notifications. Preserve the underlying events separately from derived alerts and incidents. |
+| Network/service checks | Provide explicitly configured TCP, TLS, DNS, HTTP, and service availability checks with bounded targets, timeouts, rate limits, and recorded source/target scope. Do not perform broad network discovery or port scanning by default. |
+
+#### Platform adapters and compatibility
+
+- Implement native, bounded adapters for every OS the project declares supported in IDEA.md/SPEC.md. Keep OS-specific collection behind platform modules and APIs; do not infer BSD support from a Linux implementation or vice versa.
+- Prefer documented read-only operating-system interfaces. Examples include Linux `/proc` and `/sys` interfaces and configured Linux audit/log sources, and FreeBSD's documented security-event auditing and system interfaces. Their schemas and permissions differ; normalize them only after preserving source platform, event type, and source timestamp.
+- Publish a compatibility matrix by OS family, release, architecture, collector, metric/event class, privilege requirement, and known gap. The admin UI MUST show that matrix and distinguish unsupported, disabled, permission-denied, stale, and zero-valued states.
+- Agent packages MUST be built from the project's own source and release pipeline for each platform authorized by SPEC.md. No upstream monitoring agent is installed as a hidden dependency.
+- Capability and package updates MUST use the project's signed release/content mechanism. Vulnerability feeds and third-party telemetry sources are data inputs, not executable dependencies; validate provenance, signatures where available, freshness, and schema before accepting updates.
+
+#### Agent transport and policy boundary
+
+- Security/metrics agents use the existing PART 33 registration, heartbeat, report, scoped-token, TLS, failover, buffering, update, and revocation contracts. Do not add a public agent listener or a separate vendor protocol. Agent traffic is outbound to the product server over its configured HTTPS/API endpoint unless IDEA.md documents another required standard protocol.
+- Agent report bodies MUST be schema-versioned, bounded by event count and encoded size, timestamped, sequenced per agent, replay-safe, and idempotently accepted. Apply backpressure, retry limits, durable bounded offline buffering, explicit overflow counters, and server-side rate limits. Reject malformed, stale, oversized, duplicate, or out-of-scope data safely.
+- The server MAY return a signed, versioned, declarative collection policy in an existing authenticated heartbeat response when the project declares this capability. Such policy may select only compiled-in collector IDs, documented event classes, administrator-approved local paths, thresholds, and bounded intervals. The agent verifies signature, policy version, schema, local safety limits, and platform applicability before applying it.
+- Collection policy MUST NOT contain shell commands, arbitrary code, scripts, executable/plugin downloads, file writes, package installation, account changes, firewall changes, remote scans, response actions, or instructions to execute tools. No monitoring feature may create a task-polling or remote-command endpoint. A local administrator's immutable safety limits always bound server-delivered policy.
+- The agent uses least privilege. When root/system access is required for a collector, document the exact need and isolate that collector; run unrelated code with reduced privilege where the platform supports it. Read only configured sources, redact secrets before buffering, encrypt sensitive local buffers, and honor configured deletion/retention bounds.
+- No automatic host isolation, process termination, service stop, file quarantine/delete, firewall change, account change, remediation, or arbitrary response command is permitted through the agent. Response workflows may alert, create an incident, request administrator approval, or call a separately configured typed integration with explicit scope and audit. An administrator performs any unsupported/local host response directly on that host.
+
+#### Server, UI, data, and audit requirements
+
+- Event, metric, inventory, detection, alert, incident, and audit records are distinct data classes with separate query semantics and retention. Apply tenant/domain/device scope on every read, export, mutation, and query; an agent token can submit only data for its own agent and cannot query monitoring data or administer the server.
+- Encrypt sensitive retained data and backups per PART 11 and PART 22. Enforce quotas, retention, aggregation/downsampling, deletion, backup, restore, and cluster consistency; notify administrators before capacity exhaustion. Preserve event source timestamps and separately record server ingestion time.
+- Admins configure collectors, policies, thresholds, rule packs, feed sources, data retention, alert routing, integration credentials, and component health in the Server Admin UI under AI.md-approved roots, normally `/server/{admin_path}/security/...`. No supported setting may require a separate vendor console or CLI-only workflow.
+- User and domain-administrator visibility is opt-in and explicitly scoped. Show only their authorized devices/events and redacted findings; security investigation, raw event export, and global rule/configuration management remain Server Admin-only unless IDEA.md defines delegated permissions.
+- Record audit events for collector-policy changes, rule/content changes, feed changes, alert/incident transitions, exports, retention/deletion, enrollment revocation, and approved response actions. Audit records include actor, scope, target, action, result, and time without copying secrets or unnecessary event payloads.
+- Native dashboards and alert/incident workflows are server-rendered and usable without JavaScript, following PARTS 16 and 17. Machine interfaces follow PART 14 route and response rules; feature-specific APIs are documented in IDEA.md and remain under AI.md's fixed admin route roots.
+
+#### Research basis (capability comparison only)
+
+Use the upstream documentation below to understand capability categories and interoperability expectations, not as a permission to bundle or invoke those products: [Wazuh capability catalog](https://documentation.wazuh.com/current/user-manual/capabilities/index.html), [Wazuh event analysis](https://documentation.wazuh.com/current/user-manual/ruleset/index.html), [Wazuh central component platform requirements](https://documentation.wazuh.com/current/installation-guide/wazuh-server/index.html), [Beszel capability and metrics catalog](https://beszel.dev/guide/what-is-beszel), [Linux kernel proc filesystem documentation](https://docs.kernel.org/filesystems/proc.html), and the [FreeBSD Handbook security event auditing chapter](https://docs.freebsd.org/en/books/handbook/audit/).
+
+This extension does not activate PARTS 34-36 and does not change the PART 33 agent token scope. It applies only when the product declares monitoring/security telemetry in IDEA.md; when declared, its requirements are mandatory.
 
 ### agent.yml Configuration
 
